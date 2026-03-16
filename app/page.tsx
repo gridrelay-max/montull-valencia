@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { ref, set, get, onValue } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { database as db } from "@/lib/firebase";
 import {
   PASSWORD, MEMBERS, MEMBER_COLORS, MEMBER_EMOJIS,
   DAYS, TYPE_ICONS, type Activity,
