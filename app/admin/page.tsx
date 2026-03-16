@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ref, get, set } from "firebase/database";
+import { ref, get, set, onValue, push, remove } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { DAYS, MEMBERS, MEMBER_COLORS, type Activity } from "@/lib/data";
 
@@ -77,25 +77,24 @@ function AdminLogin({ onPass }: { onPass: () => void }) {
 
 function AdminDashboard() {
   const [votes, setVotes] = useState<Record<string, Record<string, boolean>>>({});
-  const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState(0);
+  const [editMode, setEditMode] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
+  // Real-time listener for votes
   useEffect(() => {
-    loadVotes();
-  }, []);
-
-  const loadVotes = async () => {
     if (!db) return;
-    try {
-      const snapshot = await get(ref(db, "votes"));
+    const votesRef = ref(db, "votes");
+    const unsubscribe = onValue(votesRef, (snapshot) => {
       if (snapshot.exists()) {
         setVotes(snapshot.val());
+        setLastUpdate(new Date());
+      } else {
+        setVotes({});
       }
-    } catch (e) {
-      console.error("Error loading votes:", e);
-    }
-    setLoading(false);
-  };
+    });
+    return () => unsubscribe();
+  }, []);
 
   const getVoteSummary = (activityId: string) => {
     let yes = 0, no = 0;
@@ -116,28 +115,42 @@ function AdminDashboard() {
     return { yes, no, yesMembers, noMembers, total: MEMBERS.length };
   };
 
-  const day = DAYS[selectedDay];
+  const deleteActivity = async (activityId: string) => {
+    if (!confirm("¿Eliminar esta actividad?")) return;
+    // Remove votes for this activity
+    for (const member of MEMBERS) {
+      if (db && votes[member]?.[activityId] !== undefined) {
+        await set(ref(db, `votes/${member}/${activityId}`), null);
+      }
+    }
+  };
 
-  if (loading) {
-    return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0A0A0A", color: "#fff" }}>
-        <p>Cargando votos...</p>
-      </div>
-    );
-  }
+  const day = DAYS[selectedDay];
 
   return (
     <div style={{ minHeight: "100vh", background: "#0A0A0A", color: "#E8E0D4", padding: "24px" }}>
       <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
         {/* Header */}
-        <div style={{ marginBottom: "32px", textAlign: "center" }}>
-          <div style={{ fontSize: "32px", marginBottom: "8px" }}>🍊</div>
-          <h1 style={{ fontSize: "28px", color: "#F5E6C8", marginBottom: "4px", fontFamily: "'Cormorant Garamond', serif" }}>
-            Admin Dashboard
-          </h1>
-          <p style={{ fontSize: "13px", color: "#8B7D6B" }}>
-            Montull Valencia 2026 - Resultados de Votación
-          </p>
+        <div style={{ marginBottom: "32px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+            <div style={{ textAlign: "center", flex: 1 }}>
+              <div style={{ fontSize: "32px", marginBottom: "8px" }}>🍊</div>
+              <h1 style={{ fontSize: "28px", color: "#F5E6C8", marginBottom: "4px", fontFamily: "'Cormorant Garamond', serif" }}>
+                Admin Dashboard
+              </h1>
+              <p style={{ fontSize: "13px", color: "#8B7D6B" }}>
+                Montull Valencia 2026 - Resultados en Tiempo Real
+              </p>
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "rgba(76, 175, 80, 0.1)", border: "1px solid #4CAF50", borderRadius: "8px" }}>
+            <span style={{ fontSize: "12px", color: "#4CAF50" }}>
+              🟢 Actualización en tiempo real
+            </span>
+            <span style={{ fontSize: "11px", color: "#8B7D6B" }}>
+              Última actualización: {lastUpdate.toLocaleTimeString()}
+            </span>
+          </div>
         </div>
 
         {/* Day Selector */}
@@ -182,6 +195,9 @@ function AdminDashboard() {
               🚗 Día de viaje - {day.note}
             </p>
           )}
+          <p style={{ fontSize: "12px", color: "#8B7D6B", marginTop: "12px" }}>
+            💡 Nota: Para editar actividades, edita el archivo lib/data.ts y redespliega la app.
+          </p>
         </div>
 
         {/* Activities with Votes */}
@@ -189,6 +205,7 @@ function AdminDashboard() {
           {day.activities.map((activity) => {
             const summary = getVoteSummary(activity.id);
             const popularity = summary.total > 0 ? (summary.yes / summary.total) * 100 : 0;
+            const notVoted = summary.total - summary.yes - summary.no;
 
             return (
               <div
@@ -222,26 +239,31 @@ function AdminDashboard() {
                   </div>
 
                   {/* Vote Summary */}
-                  <div style={{ marginLeft: "20px", textAlign: "center", minWidth: "120px" }}>
-                    <div style={{ fontSize: "24px", fontWeight: 700, color: popularity >= 50 ? "#4CAF50" : "#FF6B6B", marginBottom: "4px" }}>
+                  <div style={{ marginLeft: "20px", textAlign: "center", minWidth: "140px" }}>
+                    <div style={{ fontSize: "28px", fontWeight: 700, color: popularity >= 50 ? "#4CAF50" : "#FF6B6B", marginBottom: "4px" }}>
                       {Math.round(popularity)}%
                     </div>
-                    <div style={{ fontSize: "12px", color: "#8B7D6B", marginBottom: "8px" }}>
-                      {summary.yes} SÍ / {summary.no} NO
+                    <div style={{ fontSize: "13px", color: "#8B7D6B", marginBottom: "4px" }}>
+                      ✓ {summary.yes} SÍ / ✗ {summary.no} NO
                     </div>
-                    <div style={{ width: "100%", height: "6px", background: "#1A1714", borderRadius: "3px", overflow: "hidden" }}>
+                    {notVoted > 0 && (
+                      <div style={{ fontSize: "11px", color: "#666", marginBottom: "8px" }}>
+                        ⏳ {notVoted} pendiente{notVoted !== 1 ? 's' : ''}
+                      </div>
+                    )}
+                    <div style={{ width: "100%", height: "8px", background: "#1A1714", borderRadius: "4px", overflow: "hidden" }}>
                       <div style={{ width: `${popularity}%`, height: "100%", background: popularity >= 50 ? "#4CAF50" : "#FF6B6B", transition: "width 0.3s" }} />
                     </div>
                   </div>
                 </div>
 
                 {/* Who voted */}
-                <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid #3A3228", display: "flex", gap: "16px", fontSize: "12px" }}>
+                <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid #3A3228", display: "flex", gap: "20px", flexWrap: "wrap", fontSize: "12px" }}>
                   {summary.yesMembers.length > 0 && (
                     <div>
-                      <span style={{ color: "#4CAF50", fontWeight: 600 }}>SÍ: </span>
+                      <span style={{ color: "#4CAF50", fontWeight: 600 }}>✓ SÍ: </span>
                       {summary.yesMembers.map(m => (
-                        <span key={m} style={{ marginRight: "6px", color: MEMBER_COLORS[m] }}>
+                        <span key={m} style={{ marginRight: "8px", padding: "2px 6px", background: `${MEMBER_COLORS[m]}20`, color: MEMBER_COLORS[m], borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
                           {m}
                         </span>
                       ))}
@@ -249,12 +271,17 @@ function AdminDashboard() {
                   )}
                   {summary.noMembers.length > 0 && (
                     <div>
-                      <span style={{ color: "#FF6B6B", fontWeight: 600 }}>NO: </span>
+                      <span style={{ color: "#FF6B6B", fontWeight: 600 }}>✗ NO: </span>
                       {summary.noMembers.map(m => (
-                        <span key={m} style={{ marginRight: "6px", color: MEMBER_COLORS[m] }}>
+                        <span key={m} style={{ marginRight: "8px", padding: "2px 6px", background: `${MEMBER_COLORS[m]}20`, color: MEMBER_COLORS[m], borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
                           {m}
                         </span>
                       ))}
+                    </div>
+                  )}
+                  {notVoted > 0 && (
+                    <div style={{ color: "#666" }}>
+                      ⏳ Pendientes: {MEMBERS.filter(m => votes[m]?.[activity.id] === undefined).join(", ")}
                     </div>
                   )}
                 </div>
